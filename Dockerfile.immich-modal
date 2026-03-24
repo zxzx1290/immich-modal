@@ -1,0 +1,41 @@
+FROM ghcr.io/immich-app/immich-machine-learning:release AS immich
+
+# Use NVIDIA CUDA 12 + cuDNN 9 runtime base so libcublasLt.so.12 and cuDNN
+# are present at runtime (required by onnxruntime-gpu).
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libmimalloc2.0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 available as `python` and `python3`
+RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+
+WORKDIR /usr/src
+
+COPY --from=immich /opt/venv /opt/venv
+COPY --from=immich /usr/src/immich_ml ./immich_ml
+COPY --from=immich /usr/src/healthcheck.py ./healthcheck.py
+
+# The venv is built with uv (no pip present). Use uv to install into the venv.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN uv pip install --python /opt/venv/bin/python --no-cache \
+    onnxruntime-gpu \
+    --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+
+# Do NOT set PATH here - Modal runtime must use system Python, not the venv.
+ENV PYTHONPATH="/usr/src" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV="/opt/venv" \
+    MACHINE_LEARNING_CACHE_FOLDER=/cache \
+    TRANSFORMERS_CACHE=/cache \
+    DEVICE=cuda
