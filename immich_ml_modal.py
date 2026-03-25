@@ -36,6 +36,10 @@ GPU_CONFIG = "T4"            # T4=16GB cheapest; L4=24GB faster; A10G=24GB high 
 # GPU_CONFIG = "A10G"
 
 SCALEDOWN_WINDOW = 120       # seconds idle before sleep
+MODEL_TTL = 90               # seconds to keep model in memory after last use
+CONCURRENT_INPUTS = 4        # max concurrent requests per container
+FUNCTION_TIMEOUT = 120       # seconds before Modal kills the function
+STARTUP_TIMEOUT = 120        # seconds allowed for web server to start (≤ FUNCTION_TIMEOUT)
 
 # ── Image ─────────────────────────────────────────────────────────────────────
 
@@ -55,7 +59,7 @@ app = modal.App(
 @app.function(
     gpu=GPU_CONFIG,
     scaledown_window=SCALEDOWN_WINDOW,
-    timeout=120,
+    timeout=FUNCTION_TIMEOUT,
     volumes={
         "/cache": modal.Volume.from_name(
             "immich-ml-model-cache",
@@ -63,7 +67,8 @@ app = modal.App(
         )
     },
 )
-@modal.web_server(port=ML_PORT, startup_timeout=120)  # match function timeout
+@modal.concurrent(max_inputs=CONCURRENT_INPUTS)
+@modal.web_server(port=ML_PORT, startup_timeout=STARTUP_TIMEOUT)  # match function timeout
 def serve():
     """
     Start the Immich ML server as a subprocess.
@@ -82,7 +87,7 @@ def serve():
         "MACHINE_LEARNING_WORKERS": "1",
         "MACHINE_LEARNING_CACHE_FOLDER": "/cache",
         "TRANSFORMERS_CACHE": "/cache",
-        "MACHINE_LEARNING_MODEL_TTL": "90",
+        "MACHINE_LEARNING_MODEL_TTL": str(MODEL_TTL),
         "DEVICE": "cuda",
         # mimalloc: find the actual .so path for this arch
         "LD_PRELOAD": (
