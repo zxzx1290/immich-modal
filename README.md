@@ -1,30 +1,23 @@
 # immich-modal
 
-Offload [Immich](https://immich.app/) machine learning inference to [Modal](https://modal.com/) serverless GPUs — CLIP smart search, face detection, and OCR.
+Run [Immich](https://immich.app/) machine learning inference (CLIP, face detection, OCR) on [Modal](https://modal.com/) serverless GPUs.
 
-## Why
-
-Immich's ML workloads (CLIP embedding, face recognition, OCR) are GPU-hungry but only run in bursts. Running a dedicated GPU server 24/7 is wasteful. This project lets you run the Immich ML server on Modal's on-demand GPU infrastructure — you only pay when inference is actually happening.
-
-## How it works
+## Architecture
 
 ```
-Immich (self-hosted)  ──HTTP──▶  Modal GPU container
-                                  ├─ CLIP (smart search)
-                                  ├─ Face detection
-                                  └─ OCR
+Immich Server --> CF Worker (auth) --> Modal (FastAPI auth proxy --> Immich ML subprocess)
 ```
 
-- Modal spins up a GPU container on demand when Immich sends an inference request
-- The container runs the official Immich ML server (`immich_ml`) inside a custom Docker image
-- Model weights are cached in a Modal Volume so they don't re-download on every cold start
-- The container scales down automatically after `SCALEDOWN_WINDOW` seconds of idle time
+- Immich ML runs as a subprocess on a Modal GPU container
+- A FastAPI ASGI layer verifies the `X-Modal-Proxy-Key` header before forwarding requests to the ML server
+- Model weights are cached in a Modal Volume so they persist across cold starts
+- The container scales down automatically after idle time
 
 ## Requirements
 
 - [Modal](https://modal.com/) account (free tier available)
-- Immich instance (self-hosted)
 - `modal` Python package
+- A Modal secret named `immich-proxy-key` containing `MODAL_PROXY_KEY`
 
 ## Setup
 
@@ -35,11 +28,10 @@ pip install modal
 modal setup
 ```
 
-### 2. Clone this repository
+### 2. Create the shared secret
 
 ```bash
-git clone https://github.com/your-username/immich-modal.git
-cd immich-modal
+modal secret create immich-proxy-key MODAL_PROXY_KEY=your-secret-key
 ```
 
 ### 3. Deploy
@@ -59,13 +51,9 @@ https://your-username--immich-machine-learning-serve.modal.run
 
 ### 4. Configure Immich
 
-In your Immich instance:
+In your Immich instance, go to **Administration > System Settings > Machine Learning** and set the URL to your Cloudflare Worker proxy URL (not the Modal URL directly).
 
-**Administration → System Settings → Machine Learning → URL**
-
-Paste the Modal URL from the previous step.
-
-> **Note:** The first request after a cold start may take a minute or two while the container boots and models load from the cache volume.
+> **Note:** The first request after a cold start may take a minute or two while the container boots and models load.
 
 ## Configuration
 
@@ -73,14 +61,21 @@ Edit the constants at the top of `immich_ml_modal.py`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `IMMICH_VERSION` | `"release"` | Immich ML image tag to use. Pin to a specific version (e.g. `"v1.132.3"`) for reproducibility. |
-| `GPU_CONFIG` | `"T4"` | Modal GPU type. `T4` (16 GB) is cheapest; `L4` or `A10G` (24 GB) for heavier workloads. |
-| `SCALEDOWN_WINDOW` | `300` | Seconds of idle time before the container scales down. |
-| `ML_PORT` | `3003` | Port the Immich ML server listens on. No need to change. |
+| `IMMICH_VERSION` | `release` | Immich ML image tag (e.g. `v1.132.3`) |
+| `GPU_CONFIG` | `T4` | Modal GPU type (`T4`, `L4`, `A10G`) |
+| `SCALEDOWN_WINDOW` | `120` | Seconds idle before container sleeps |
+| `MODEL_TTL` | `90` | Seconds to keep ML model in memory |
+| `CONCURRENT_INPUTS` | `4` | Max concurrent requests per container |
+| `FUNCTION_TIMEOUT` | `120` | Seconds before Modal kills the function |
 
-## Model cache
+## Files
 
-Model weights are stored in a Modal Volume named `immich-ml-model-cache`. This volume is created automatically on first deploy. Subsequent cold starts load models from the volume instead of re-downloading them from the internet.
+- `immich_ml_modal.py` - Modal app with FastAPI auth proxy and Immich ML subprocess
+- `Dockerfile.immich-modal` - Multi-stage Dockerfile: copies Immich ML into a CUDA runtime image with onnxruntime-gpu
+
+## Related
+
+- [immich-modal-proxy](https://github.com/zxzx1290/immich-modal-proxy) - Cloudflare Worker that sends authenticated requests to this endpoint
 
 ## Disclaimer
 

@@ -29,7 +29,6 @@ import modal
 # ── Config ────────────────────────────────────────────────────────────────────
 
 IMMICH_VERSION = "release"   # or pin e.g. "v1.132.3"
-ML_PORT = 3003
 
 GPU_CONFIG = "T4"            # T4=16GB cheapest; L4=24GB faster; A10G=24GB high load
 # GPU_CONFIG = "L4"
@@ -45,16 +44,68 @@ STARTUP_TIMEOUT = 120        # seconds allowed for web server to start (≤ FUNC
 
 dockerfile_path = Path(__file__).parent / "Dockerfile.immich-modal"
 
-image = modal.Image.from_dockerfile(dockerfile_path)
+image = modal.Image.from_dockerfile(dockerfile_path).pip_install(
+    "httpx",
+    "fastapi",
+    "uvicorn",
+)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = modal.App(
     name="immich-machine-learning",
     image=image,
+    secrets=[modal.Secret.from_name("immich-proxy-key")],
 )
 
+# ── ASGI App factory (auth + reverse proxy) ───────────────────────────────────
+# fastapi is only available inside the Modal container image, NOT on the local
+# machine running `modal deploy`.  Importing it at module-level would cause a
+# ModuleNotFoundError during the deploy step.  Wrapping the imports inside a
+# factory function defers them until the code actually runs inside the container.
+
+def _make_web_app():
+    from fastapi import FastAPI, Request, Response  # container-only import
+    import httpx
+
+    web_app = FastAPI()
+
+    @web_app.middleware("http")
+    async def verify_key(request: Request, call_next):
+        key = request.headers.get("X-Modal-Proxy-Key", "")
+        if key != os.environ.get("MODAL_PROXY_KEY", ""):
+            return Response(
+                content='{"error":"forbidden"}',
+                status_code=403,
+                media_type="application/json",
+            )
+        return await call_next(request)
+
+    @web_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    async def proxy(request: Request, path: str):
+        body = await request.body()
+        skip = {"host", "x-modal-proxy-key", "transfer-encoding"}
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.request(
+                method=request.method,
+                url=f"http://127.0.0.1:3003/{path}",
+                headers=headers,
+                content=body,
+                timeout=FUNCTION_TIMEOUT,
+            )
+
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers=dict(resp.headers),
+        )
+
+    return web_app
+
 # ── Web Endpoint ──────────────────────────────────────────────────────────────
+
 
 @app.function(
     gpu=GPU_CONFIG,
@@ -68,10 +119,10 @@ app = modal.App(
     },
 )
 @modal.concurrent(max_inputs=CONCURRENT_INPUTS)
-@modal.web_server(port=ML_PORT, startup_timeout=STARTUP_TIMEOUT)  # match function timeout
+@modal.asgi_app()
 def serve():
     """
-    Start the Immich ML server as a subprocess.
+    Start the Immich ML server as a subprocess, fronted by a FastAPI auth proxy.
 
     Key design: Modal's runtime runner uses the system Python (/usr/local/bin/python).
     We must NOT override PATH globally (done in Dockerfile) because that would make
@@ -124,7 +175,7 @@ def serve():
         # Use HTTP /ping instead of bare TCP connect — port open ≠ server ready
         try:
             with urllib.request.urlopen(
-                f"http://127.0.0.1:{ML_PORT}/ping", timeout=2
+                "http://127.0.0.1:3003/ping", timeout=2
             ) as resp:
                 return resp.status == 200
         except Exception:
@@ -136,14 +187,12 @@ def serve():
                 )
             return False
 
-    print(f"Waiting for Immich ML server on port {ML_PORT}...")
+    print("Waiting for Immich ML server on port 3003...")
     while not ml_server_ready():
         time.sleep(2.0)
-
     print("Immich ML server is ready.")
-    # serve() must return here so Modal's web_server proxy can start forwarding
-    # traffic. The subprocess keeps running in the background; the output relay
-    # thread (daemon=True) will print any crash output to Modal logs.
+
+    return _make_web_app()
 
 
 # ── Local entrypoint ──────────────────────────────────────────────────────────
