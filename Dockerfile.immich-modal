@@ -28,8 +28,7 @@ COPY --from=immich /usr/src/healthcheck.py ./healthcheck.py
 # The venv is built with uv (no pip present). Use uv to install into the venv.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN uv pip install --python /opt/venv/bin/python --no-cache \
-    onnxruntime-gpu \
-    --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+    onnxruntime-gpu
 
 # Do NOT set PATH here - Modal runtime must use system Python, not the venv.
 ENV PYTHONPATH="/usr/src" \
