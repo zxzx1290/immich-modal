@@ -1,4 +1,6 @@
-FROM ghcr.io/immich-app/immich-machine-learning:release AS immich
+# Pinned to match the Immich server version. Bump this together with the
+# server, then redeploy - a change here re-triggers the Modal image build.
+FROM ghcr.io/immich-app/immich-machine-learning:v3.1.0 AS immich
 
 # Use NVIDIA CUDA 12 + cuDNN 9 runtime base so libcublasLt.so.12 and cuDNN
 # are present at runtime (required by onnxruntime-gpu).
@@ -26,9 +28,14 @@ COPY --from=immich /usr/src/immich_ml ./immich_ml
 COPY --from=immich /usr/src/healthcheck.py ./healthcheck.py
 
 # The venv is built with uv (no pip present). Use uv to install into the venv.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+#
+# 1.26.0 is the last release built against CUDA 12; 1.27.0+ link against
+# libcublasLt.so.13 and silently fall back to CPU on this base image.
+# It is also the version Immich itself locks for its `cuda` extra, so it stays
+# in step with the onnxruntime already in the copied venv.
+COPY --from=ghcr.io/astral-sh/uv:0.12.4 /uv /usr/local/bin/uv
 RUN uv pip install --python /opt/venv/bin/python --no-cache \
-    onnxruntime-gpu
+    onnxruntime-gpu==1.26.0
 
 # Do NOT set PATH here - Modal runtime must use system Python, not the venv.
 ENV PYTHONPATH="/usr/src" \

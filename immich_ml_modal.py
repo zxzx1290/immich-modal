@@ -28,8 +28,6 @@ import modal
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-IMMICH_VERSION = "release"   # or pin e.g. "v1.132.3"
-
 GPU_CONFIG = "T4"            # T4=16GB cheapest; L4=24GB faster; A10G=24GB high load
 # GPU_CONFIG = "L4"
 # GPU_CONFIG = "A10G"

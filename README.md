@@ -44,11 +44,6 @@ modal serve immich_ml_modal.py
 modal deploy immich_ml_modal.py
 ```
 
-After deploying, Modal will print a URL like:
-```
-https://your-username--immich-machine-learning-serve.modal.run
-```
-
 ### 4. Configure Immich
 
 In your Immich instance, go to **Administration > System Settings > Machine Learning** and set the URL to your Cloudflare Worker proxy URL (not the Modal URL directly).
@@ -61,12 +56,20 @@ Edit the constants at the top of `immich_ml_modal.py`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `IMMICH_VERSION` | `release` | Immich ML image tag (e.g. `v1.132.3`) |
 | `GPU_CONFIG` | `T4` | Modal GPU type (`T4`, `L4`, `A10G`) |
 | `SCALEDOWN_WINDOW` | `120` | Seconds idle before container sleeps |
 | `MODEL_TTL` | `90` | Seconds to keep ML model in memory |
 | `CONCURRENT_INPUTS` | `4` | Max concurrent requests per container |
 | `FUNCTION_TIMEOUT` | `120` | Seconds before Modal kills the function |
+
+### Immich version
+
+The Immich ML image is pinned in the `FROM` line of `Dockerfile.immich-modal`.
+Immich recommends keeping it in sync with the server version - mismatches are
+not rejected, but [may cause bugs and instability][docs]. To upgrade: bump the
+server first, then update the tag here and run `modal deploy` again.
+
+[docs]: https://docs.immich.app/guides/remote-machine-learning
 
 ## Files
 
