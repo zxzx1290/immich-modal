@@ -17,7 +17,7 @@ Immich Server --> CF Worker (auth) --> Modal (FastAPI auth proxy --> Immich ML s
 
 - [Modal](https://modal.com/) account (free tier available)
 - `modal` Python package
-- A Modal secret named `immich-proxy-key` containing `MODAL_PROXY_KEY`
+- A Modal secret named `immich-proxy-key` containing `MODAL_PROXY_KEY` (and optionally `HF_TOKEN`)
 
 ## Setup
 
@@ -31,8 +31,21 @@ modal setup
 ### 2. Create the shared secret
 
 ```bash
-modal secret create immich-proxy-key MODAL_PROXY_KEY=your-secret-key
+modal secret create immich-proxy-key \
+  MODAL_PROXY_KEY=your-secret-key \
+  HF_TOKEN=hf_xxxxxxxx
 ```
+
+Every key in this secret is exported into the container environment and inherited
+by the Immich ML subprocess.
+
+`HF_TOKEN` is optional. Immich ML downloads model weights from Hugging Face, and
+anonymous downloads share a per-IP rate limit - since Modal's egress IPs are
+shared between tenants, a cold model cache can occasionally hit a 429. A
+[read-only token][hf-tokens] avoids that and silences the `You are sending
+unauthenticated requests to the HF Hub` warning in the logs.
+
+[hf-tokens]: https://huggingface.co/settings/tokens
 
 ### 3. Deploy
 
